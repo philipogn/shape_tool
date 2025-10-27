@@ -1,0 +1,3 @@
+## Shape Detection with OpenCV 
+- Little project to learn OpenCV and for detecting shapes and provide measurements (in some way)
+- Plan to finish and further expand into some sort of sign detection tool...
