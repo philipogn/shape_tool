@@ -1,0 +1,12 @@
+plan:
+- recognize shape
+- crop image to show just the shape
+- preprocess image
+- categorize sign
+
+issues:
+- issues with circles, sometimes they are detected with 4 or 8 sides
+    - with cv2.approxPolyDP(), it approximates the contour using straight lines, so a circle is approximated as a many sided polygon
+      depending on blur, edge quality, and epsilon value
+    - fix check roundness/circularity of the shape 
+    - kind of works but unreliable depending on resolution of image resulting in jaggedness and blur preprocessing

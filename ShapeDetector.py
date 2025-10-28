@@ -1,5 +1,6 @@
 import cv2
 import matplotlib.pyplot as plt
+import math
 cv2.startWindowThread()
 
 # load_image, process_image, find_contours (edges)
@@ -53,31 +54,36 @@ class ShapeMeasurer:
     def measure_contour(contour: list) -> dict:
         area = cv2.contourArea(contour) # calculate area
         perimeter = cv2.arcLength(contour, True) # perimeter
-
-        x, y, w, h = cv2.boundingRect(contour) # this might break or be inaccurate for diamonds, or tilted oblongs?
+        x, y, w, h = cv2.boundingRect(contour) # this might break or be inaccurate for diamonds, or tilted oblongs? it doesn't so far
 
         eps = 0.03 * perimeter
         approx = cv2.approxPolyDP(contour, eps, True) # apparently this works for finding sides of a 'shape' according to stackoverflow
         num_sides = len(approx)
+        circularity = 4 * math.pi * area / (perimeter ** 2) if perimeter > 0 else 0 # formula to check roundness to detect circles
 
-        shape_type = ShapeMeasurer.classify_shape(num_sides, w, h)
+        shape_type = ShapeMeasurer.classify_shape(num_sides, w, h, approx, circularity)
 
         return {'area': area, 'perimeter': perimeter, 'width': w, 'height': h, 'x': x, 'y': y, 
-                'num_sides': num_sides, 'shape_type': shape_type}
+                'num_sides': num_sides, 'shape_type': shape_type, 'circularity': circularity}
 
     @staticmethod
-    def classify_shape(num_sides: int, width: float, height: float) -> str:
+    def classify_shape(num_sides: int, width: float, height: float, approx, circularity) -> str:
         shape_dict = {3: 'Triangle', 4: ('Square', 'Rectangle'), 5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon', 8: 'Octagon'}
+        if circularity > 0.85: # threshold around 0.8-0.9, can be unreliable depending on jaggedness or blur of contours...
+            return 'Circle'
         if num_sides == 4:
             proportion = width / height # check if proportion ~1 for squares
             if 0.95 <= proportion <= 1.05: 
                 return shape_dict[4][0]
             else:
                 return shape_dict[4][1]
+        # elif num_sides == 8: # worked but sometimes circles can have somehow have sides ranging 4-11????
+        #     if cv2.isContourConvex(approx): # circles show 8 sides, check if convex for circle
+        #         return 'Circle/Polygon'
+        #     else: 
+        #         return shape_dict[8]
         elif num_sides in shape_dict:
             return shape_dict[num_sides]
-        elif num_sides >= 9:
-            return 'Circle/Polygon'
         else:
             return 'Unknown shape'
         
@@ -91,27 +97,26 @@ class ResultVisualizer:
 
             # put text of shape info in center
             x, y = measure['x'] + (measure['width'] // 4), measure['y'] + (measure['height'] // 2)
-            label = f'{measure["shape_type"]}'
+            label = f'{measure["shape_type"]}, {measure["num_sides"]}'
             cv2.putText(
                 self.image, 
                 label, 
                 (x, y), 
                 cv2.FONT_HERSHEY_SIMPLEX, 
-                1, 
-                (0, 0, 0), 
-                2,
-            )
-
-            area_label = f'area: {measure["area"]}'
-            cv2.putText(
-                self.image,
-                area_label,
-                (x, y + 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
                 1,
                 (0, 0, 0),
-                2
+                1
             )
+            # area_label = f'area: {measure["area"]}'
+            # cv2.putText(
+            #     self.image,
+            #     area_label,
+            #     (x, y + 30),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     1,
+            #     (0, 255, 0),
+            #     1
+            # )
         return self.image
     
     def display(self):
