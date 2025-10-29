@@ -4,21 +4,12 @@ import matplotlib.pyplot as plt
 import math
 cv2.startWindowThread()
 
-# load_image, process_image, find_contours (edges)
 class DetectionStrategy(ABC):
     @abstractmethod
     def preprocess(self, image):
         pass
 
 class YellowEdgeDetection(DetectionStrategy):
-    def preprocess(self, image):
-        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
-        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
-        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-
-        return edges
-
-class EdgeDetection(DetectionStrategy):
     def preprocess(self, image):
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         # define range for yellow in HSV
@@ -30,9 +21,18 @@ class EdgeDetection(DetectionStrategy):
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
         combined = cv2.bitwise_or(edges, mask_yellow)
-
         return combined
 
+class EdgeDetection(DetectionStrategy):
+    def preprocess(self, image):
+        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
+        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
+        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
+        return edges
+
+
+
+# load_image, process_image, find_contours (edges)
 class ShapeDetector():
     def __init__(self, image_path, strategy: DetectionStrategy):
         self.image_path = image_path
@@ -82,7 +82,7 @@ class ShapeMeasurer:
         shape_type = ShapeMeasurer.classify_shape(num_sides, w, h, approx, circularity)
 
         return {'area': area, 'perimeter': perimeter, 'width': w, 'height': h, 'x': x, 'y': y, 
-                'num_sides': num_sides, 'shape_type': shape_type, 'circularity': circularity}
+                'num_sides': num_sides, 'shape_type': shape_type}
 
     @staticmethod
     def classify_shape(num_sides: int, width: float, height: float, approx, circularity) -> str:
@@ -105,6 +105,9 @@ class ShapeMeasurer:
         else:
             return 'Unknown shape'
         
+
+
+
 class ResultVisualizer:
     def __init__(self, image):
         self.image = image.copy()
@@ -121,9 +124,9 @@ class ResultVisualizer:
                 label, 
                 (x, y), 
                 cv2.FONT_HERSHEY_SIMPLEX, 
-                1,
-                (0, 0, 0),
-                2
+                0.5,
+                (0, 255, 0),
+                1
             )
             area_label = f'Area: {measure["area"]}'
             cv2.putText(
@@ -131,9 +134,9 @@ class ResultVisualizer:
                 area_label,
                 (x, y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 0, 0),
-                2
+                0.5,
+                (0, 255, 0),
+                1
             )
         return self.image
     
@@ -148,14 +151,21 @@ class ResultVisualizer:
         plt.tight_layout()
         plt.show()
 
+
+
+
 class ShapeApp:
     def __init__(self, image_path):
         self.image_path = image_path
         self.detector = None
         self.measurements = []
+        self.strategies = {'1': YellowEdgeDetection(), '2': EdgeDetection()}
 
-    def run(self):
-        self.detector = ShapeDetector(self.image_path)
+    def run(self, strategy_choice = '1'):
+        strategy = self.strategies.get(strategy_choice, YellowEdgeDetection()) # get choice or run default
+        self.detector = ShapeDetector(self.image_path, strategy)
+        
+        print('Loading and processing image...')
         self.detector.load_image()
         self.detector.preprocess_image()
         contours = self.detector.find_contours()
