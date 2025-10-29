@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import cv2
 import matplotlib.pyplot as plt
+import numpy as np
 import math
 cv2.startWindowThread()
 
@@ -21,6 +22,8 @@ class YellowEdgeDetection(DetectionStrategy):
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
         combined = cv2.bitwise_or(edges, mask_yellow)
+        # plt.title('yellow')
+        # plt.imshow(combined)
         return combined
 
 class EdgeDetection(DetectionStrategy):
@@ -28,7 +31,32 @@ class EdgeDetection(DetectionStrategy):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
+        # plt.title('norm')
+        # plt.imshow(edges)
         return edges
+    
+class AdaptiveThreshold(DetectionStrategy): # unsure for use case right now, found on web, could be useful
+    def preprocess(self, image):
+        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
+        adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        # plt.title('adaptive')
+        # plt.imshow(adaptive)
+        return adaptive
+    
+class Morphology(DetectionStrategy): # method works great for noisy shapes, e.g., coins or shapes with designs..
+    def preprocess(self, image):
+        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
+        # convert greyscale to binary, nonzero pixel = 1, zero pixel = 0, need to set threshold to distinguish between yellow & white
+        # but this makes it unable to detect shapes??
+        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        kernel = np.ones((3, 3), np.uint8)
+        closing = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        # plt.title('binary')
+        # plt.imshow(closing)
+        return closing
 
 
 
@@ -53,16 +81,9 @@ class ShapeDetector():
         return self.processed_image
     
     def find_contours(self):
-        # convert greyscale to binary, nonzero pixel = 1, zero pixel = 0, need to set threshold to distinguish between yellow & white
-        # but this makes it unable to detect shapes??
-        # _, binary = cv2.threshold(self.processed_image, 255, 255, cv2.THRESH_TOZERO_INV)
         # RETR_EXTERNAL just for detect outline for shape. Not RETR_TREE, too noisy
-        # contours, _ = cv2.findContours(self.processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         contours, _ = cv2.findContours(self.processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
         self.contours = [c for c in contours if cv2.contourArea(c) > 100] # filters out noisy contours
-
-        image = cv2.drawContours(self.original_image, contours, -1, (0, 255, 0), 2)
         return self.contours
 
 # measure_contour, what_shape?
@@ -78,19 +99,20 @@ class ShapeMeasurer:
         approx = cv2.approxPolyDP(contour, eps, True) # apparently this works for finding sides of a 'shape' according to stackoverflow
         num_sides = len(approx)
         circularity = 4 * math.pi * area / (perimeter ** 2) if perimeter > 0 else 0 # formula to check roundness to detect circles
+        proportion = w / h
 
         shape_type = ShapeMeasurer.classify_shape(num_sides, w, h, approx, circularity)
-
         return {'area': area, 'perimeter': perimeter, 'width': w, 'height': h, 'x': x, 'y': y, 
-                'num_sides': num_sides, 'shape_type': shape_type}
+                'num_sides': num_sides, 'shape_type': shape_type, 'circularity': circularity, 'proportion': proportion}
 
     @staticmethod
     def classify_shape(num_sides: int, width: float, height: float, approx, circularity) -> str:
         shape_dict = {3: 'Triangle', 4: ('Square', 'Rectangle'), 5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon', 8: 'Octagon'}
-        if circularity > 0.85: # threshold around 0.8-0.9, can be unreliable depending on jaggedness or blur of contours...
+        proportion = width / height # get aspect ratio proportion
+        # threshold ~0.8-0.9, can be unreliable due to jaggedness or blur of contours + checking proportion incase for stretched circles
+        if circularity > 0.85 and 0.8 < proportion < 1.2: 
             return 'Circle'
         if num_sides == 4:
-            proportion = width / height # check if proportion ~1 for squares
             if 0.95 <= proportion <= 1.05: 
                 return shape_dict[4][0]
             else:
@@ -114,30 +136,17 @@ class ResultVisualizer:
 
     def draw_contours(self, contours, measurements):
         for contour, measure in zip(contours, measurements):
-            cv2.drawContours(self.image, [contour], -1, (0, 0, 0), 2)
+            cv2.drawContours(self.image, [contour], -1, (100, 100, 50), 2)
 
             # put text of shape info in center
             x, y = measure['x'] + (measure['width'] // 5), measure['y'] + (measure['height'] // 3)
             label = f'{measure["shape_type"]}, {measure["num_sides"]} sides'
-            cv2.putText(
-                self.image, 
-                label, 
-                (x, y), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                0.5,
-                (0, 255, 0),
-                1
-            )
+            cv2.putText(self.image, label, (x, y), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 50), 1)
+            
             area_label = f'Area: {measure["area"]}'
-            cv2.putText(
-                self.image,
-                area_label,
-                (x, y + 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                1
-            )
+            cv2.putText(self.image, area_label, (x, y + 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 50), 1)
         return self.image
     
     def display(self):
@@ -159,9 +168,9 @@ class ShapeApp:
         self.image_path = image_path
         self.detector = None
         self.measurements = []
-        self.strategies = {'1': YellowEdgeDetection(), '2': EdgeDetection()}
+        self.strategies = {'1': YellowEdgeDetection(), '2': EdgeDetection(), '3': AdaptiveThreshold(), '4': Morphology()}
 
-    def run(self, strategy_choice = '1'):
+    def run(self, strategy_choice: str = '1'):
         strategy = self.strategies.get(strategy_choice, YellowEdgeDetection()) # get choice or run default
         self.detector = ShapeDetector(self.image_path, strategy)
         
@@ -184,7 +193,7 @@ class ShapeApp:
     def print_information(self):
         for i, measure in enumerate(self.measurements, 1):
             print(f'\nShape {i}')
-            print(f'Type: {measure["shape_type"]}')
+            print(f'Type: {measure["shape_type"]}, Circularity: {measure["circularity"]:.2f}, AR: {measure["proportion"]}')
             print(f'Area: {measure["area"]:.2f} pixels squared')
             print(f'Perimeter: {measure["perimeter"]:.2f} pixels')
             print(f'Dimensions: {measure["width"]} x {measure["height"]} pixels')
@@ -193,8 +202,10 @@ class ShapeApp:
 
 if __name__ == '__main__':
     IMAGE_PATH = 'images/more_shapes.png'
-    # IMAGE_PATH = 'images/road_sign.jpg'
+    # IMAGE_PATH = 'images/sign_night.jpg'
+    # IMAGE_PATH = 'images/traffic_noisy.jpeg'
+
     # IMAGE_PATH = 'images/coins.jpeg'
     shape = ShapeApp(IMAGE_PATH)
-    shape.run()
+    shape.run('1')
     shape.print_information()
