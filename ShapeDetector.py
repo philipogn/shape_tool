@@ -1,12 +1,42 @@
+from abc import ABC, abstractmethod
 import cv2
 import matplotlib.pyplot as plt
 import math
 cv2.startWindowThread()
 
 # load_image, process_image, find_contours (edges)
+class DetectionStrategy(ABC):
+    @abstractmethod
+    def preprocess(self, image):
+        pass
+
+class YellowEdgeDetection(DetectionStrategy):
+    def preprocess(self, image):
+        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
+        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
+        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
+
+        return edges
+
+class EdgeDetection(DetectionStrategy):
+    def preprocess(self, image):
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        # define range for yellow in HSV
+        lower_yellow = (20, 100, 100)
+        upper_yellow = (40, 255, 255)
+        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow) # create mask for yellow
+
+        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
+        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
+        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
+        combined = cv2.bitwise_or(edges, mask_yellow)
+
+        return combined
+
 class ShapeDetector():
-    def __init__(self, image_path):
+    def __init__(self, image_path, strategy: DetectionStrategy):
         self.image_path = image_path
+        self.strategy = strategy
         self.original_image = None
         self.processed_image = None
         self.contours = []
@@ -18,21 +48,9 @@ class ShapeDetector():
         return self.original_image
     
     def preprocess_image(self):
-        # to detect yellow
-        hsv = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2HSV)
-        # define range for yellow in HSV
-        lower_yellow = (20, 100, 100)
-        upper_yellow = (40, 255, 255)
-        mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow) # create mask for yellow
-
-        greyed = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2GRAY) # convert to greyscale
-        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
-        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-        combined = cv2.bitwise_or(edges, mask_yellow)
-
-        self.processed_image = combined
+        self.processed_image = self.strategy.preprocess(self.original_image)
         # plt.imshow(self.processed_image)
-        return edges
+        return self.processed_image
     
     def find_contours(self):
         # convert greyscale to binary, nonzero pixel = 1, zero pixel = 0, need to set threshold to distinguish between yellow & white
@@ -96,8 +114,8 @@ class ResultVisualizer:
             cv2.drawContours(self.image, [contour], -1, (0, 0, 0), 2)
 
             # put text of shape info in center
-            x, y = measure['x'] + (measure['width'] // 4), measure['y'] + (measure['height'] // 2)
-            label = f'{measure["shape_type"]}, {measure["num_sides"]}'
+            x, y = measure['x'] + (measure['width'] // 5), measure['y'] + (measure['height'] // 3)
+            label = f'{measure["shape_type"]}, {measure["num_sides"]} sides'
             cv2.putText(
                 self.image, 
                 label, 
@@ -105,18 +123,18 @@ class ResultVisualizer:
                 cv2.FONT_HERSHEY_SIMPLEX, 
                 1,
                 (0, 0, 0),
-                1
+                2
             )
-            # area_label = f'area: {measure["area"]}'
-            # cv2.putText(
-            #     self.image,
-            #     area_label,
-            #     (x, y + 30),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     1,
-            #     (0, 255, 0),
-            #     1
-            # )
+            area_label = f'Area: {measure["area"]}'
+            cv2.putText(
+                self.image,
+                area_label,
+                (x, y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 0),
+                2
+            )
         return self.image
     
     def display(self):
@@ -143,25 +161,30 @@ class ShapeApp:
         contours = self.detector.find_contours()
         print(f'Found {len(contours)} shapes')
 
+        print('Measuring shapes...')
         measurer = ShapeMeasurer()
         for shape in contours:
             self.measurements.append(measurer.measure_contour(shape))
         
-        print('Visualizing results..')
+        print('Visualizing results...')
         visualizer = ResultVisualizer(self.detector.original_image)
         visualizer.draw_contours(contours, self.measurements)
         visualizer.display()
-        
+
+    def print_information(self):
+        for i, measure in enumerate(self.measurements, 1):
+            print(f'\nShape {i}')
+            print(f'Type: {measure["shape_type"]}')
+            print(f'Area: {measure["area"]:.2f} pixels squared')
+            print(f'Perimeter: {measure["perimeter"]:.2f} pixels')
+            print(f'Dimensions: {measure["width"]} x {measure["height"]} pixels')
 
 
-    
 
 if __name__ == '__main__':
-    IMAGE_PATH = 'images/shapes.png'
+    IMAGE_PATH = 'images/more_shapes.png'
     # IMAGE_PATH = 'images/road_sign.jpg'
     # IMAGE_PATH = 'images/coins.jpeg'
     shape = ShapeApp(IMAGE_PATH)
     shape.run()
-
-
-
+    shape.print_information()
