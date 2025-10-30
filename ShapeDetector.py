@@ -10,10 +10,10 @@ class DetectionStrategy(ABC):
     def preprocess(self, image):
         pass
 
-class YellowEdgeDetection(DetectionStrategy):
+class YellowEdgeDetection(DetectionStrategy): # only good for white backgrounds, or distinguishable bg colour from shape
     def preprocess(self, image):
+        # defining range for yellow in HSV
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        # define range for yellow in HSV
         lower_yellow = (20, 100, 100)
         upper_yellow = (40, 255, 255)
         mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow) # create mask for yellow
@@ -22,8 +22,8 @@ class YellowEdgeDetection(DetectionStrategy):
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
         combined = cv2.bitwise_or(edges, mask_yellow)
-        # plt.title('yellow')
-        # plt.imshow(combined)
+        plt.title('yellow')
+        plt.imshow(combined)
         return combined
 
 class EdgeDetection(DetectionStrategy):
@@ -31,17 +31,25 @@ class EdgeDetection(DetectionStrategy):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-        # plt.title('norm')
-        # plt.imshow(edges)
+        plt.title('norm')
+        plt.imshow(edges)
         return edges
     
-class AdaptiveThreshold(DetectionStrategy): # unsure for use case right now, found on web, could be useful
+class AdaptiveThreshold(DetectionStrategy): # adapts to varying brightness levels of image for edge detection, great overall
     def preprocess(self, image):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
+        # THRESH_BINARY_INV for white shapes on black bg
         adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        # plt.title('adaptive')
-        # plt.imshow(adaptive)
+
+        # kernel = np.ones((3, 3), np.uint8)
+        # closing = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, kernel)
+        # plt.title('binary')
+        # plt.imshow(closing)
+        # return closing
+    
+        plt.title('adaptive')
+        plt.imshow(adaptive)
         return adaptive
     
 class Morphology(DetectionStrategy): # method works great for noisy shapes, e.g., coins or shapes with designs..
@@ -54,8 +62,8 @@ class Morphology(DetectionStrategy): # method works great for noisy shapes, e.g.
 
         kernel = np.ones((3, 3), np.uint8)
         closing = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        # plt.title('binary')
-        # plt.imshow(closing)
+        plt.title('binary')
+        plt.imshow(closing)
         return closing
 
 
@@ -82,6 +90,7 @@ class ShapeDetector():
     
     def find_contours(self):
         # RETR_EXTERNAL just for detect outline for shape. Not RETR_TREE, too noisy
+        # TREE works well with AdaptiveThreshold but returns nested contours, external ignores the shapes and marks the border of the image
         contours, _ = cv2.findContours(self.processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         self.contours = [c for c in contours if cv2.contourArea(c) > 100] # filters out noisy contours
         return self.contours
@@ -95,7 +104,7 @@ class ShapeMeasurer:
         perimeter = cv2.arcLength(contour, True) # perimeter
         x, y, w, h = cv2.boundingRect(contour) # this might break or be inaccurate for diamonds, or tilted oblongs? it doesn't so far
 
-        eps = 0.03 * perimeter
+        eps = 0.01 * perimeter # greatest distance from contour to approximation contour, measurement of accuracy, low for strictness
         approx = cv2.approxPolyDP(contour, eps, True) # apparently this works for finding sides of a 'shape' according to stackoverflow
         num_sides = len(approx)
         circularity = 4 * math.pi * area / (perimeter ** 2) if perimeter > 0 else 0 # formula to check roundness to detect circles
@@ -136,7 +145,7 @@ class ResultVisualizer:
 
     def draw_contours(self, contours, measurements):
         for contour, measure in zip(contours, measurements):
-            cv2.drawContours(self.image, [contour], -1, (100, 100, 50), 2)
+            cv2.drawContours(self.image, [contour], -1, (100, 255, 50), 2)
 
             # put text of shape info in center
             x, y = measure['x'] + (measure['width'] // 5), measure['y'] + (measure['height'] // 3)
@@ -202,10 +211,11 @@ class ShapeApp:
 
 if __name__ == '__main__':
     IMAGE_PATH = 'images/more_shapes.png'
+    # IMAGE_PATH = 'images/book.jpg'
     # IMAGE_PATH = 'images/sign_night.jpg'
     # IMAGE_PATH = 'images/traffic_noisy.jpeg'
 
     # IMAGE_PATH = 'images/coins.jpeg'
     shape = ShapeApp(IMAGE_PATH)
-    shape.run('1')
+    shape.run('3')
     shape.print_information()
