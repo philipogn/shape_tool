@@ -21,12 +21,13 @@ class YellowEdgeDetection(DetectionStrategy): # only good for white backgrounds,
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-        combined = cv2.bitwise_or(edges, mask_yellow)
+
+        combined = cv2.bitwise_or(edges, mask_yellow) # for including yellow
         plt.title('yellow')
         plt.imshow(combined)
         return combined
 
-class EdgeDetection(DetectionStrategy):
+class EdgeDetection(DetectionStrategy): 
     def preprocess(self, image):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
@@ -40,24 +41,17 @@ class AdaptiveThreshold(DetectionStrategy): # adapts to varying brightness level
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
         # THRESH_BINARY_INV for white shapes on black bg
-        adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
 
-        # kernel = np.ones((3, 3), np.uint8)
-        # closing = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, kernel)
-        # plt.title('binary')
-        # plt.imshow(closing)
-        # return closing
-    
         plt.title('adaptive')
         plt.imshow(adaptive)
         return adaptive
     
 class Morphology(DetectionStrategy): # method works great for noisy shapes, e.g., coins or shapes with designs..
+    ''' WORK IN PROGRESS '''
     def preprocess(self, image):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
-        # convert greyscale to binary, nonzero pixel = 1, zero pixel = 0, need to set threshold to distinguish between yellow & white
-        # but this makes it unable to detect shapes??
         _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
         kernel = np.ones((3, 3), np.uint8)
