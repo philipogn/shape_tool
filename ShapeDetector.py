@@ -6,14 +6,17 @@ import math
 cv2.startWindowThread()
 
 class DetectionStrategy(ABC):
+    ''' Abstract base class for edge detection strategies '''
     @abstractmethod
     def preprocess(self, image):
         pass
 
-class YellowEdgeDetection(DetectionStrategy):
+class CannyEdgeDetection(DetectionStrategy): 
+    ''' Uses Canny for edge detection, good clear boundaries between objects and background
+        Includes ranging for yellow color that gets mixed with white '''
     def preprocess(self, image):
+        # defining range for yellow in HSV
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        # define range for yellow in HSV
         lower_yellow = (20, 100, 100)
         upper_yellow = (40, 255, 255)
         mask_yellow = cv2.inRange(hsv, lower_yellow, upper_yellow) # create mask for yellow
@@ -21,47 +24,39 @@ class YellowEdgeDetection(DetectionStrategy):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
         edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-        combined = cv2.bitwise_or(edges, mask_yellow)
-        # plt.title('yellow')
-        # plt.imshow(combined)
-        return combined
 
-class EdgeDetection(DetectionStrategy):
-    def preprocess(self, image):
-        greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) # convert to greyscale
-        blurred = cv2.GaussianBlur(greyed, (5, 5), 0) # apply blur to reduce noise
-        edges = cv2.Canny(blurred, threshold1=30, threshold2=150) # find edges
-        # plt.title('norm')
-        # plt.imshow(edges)
-        return edges
+        combined = cv2.bitwise_or(edges, mask_yellow) # for including yellow
+        cv2.imshow('image', combined)
+        return combined
     
-class AdaptiveThreshold(DetectionStrategy): # unsure for use case right now, found on web, could be useful
+class AdaptiveThreshold(DetectionStrategy):
+    ''' Uses adaptive thresholding, good for varying brightness/lighting levels, great overall '''
     def preprocess(self, image):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
-        adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        # plt.title('adaptive')
-        # plt.imshow(adaptive)
+        # THRESH_BINARY_INV for white shapes on black bg
+        adaptive = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        cv2.imshow('image', adaptive)
         return adaptive
     
-class Morphology(DetectionStrategy): # method works great for noisy shapes, e.g., coins or shapes with designs..
+class Morphology(DetectionStrategy):
+    ''' Uses morphology operations, good for noisy images, e.g., coins or shapes with designs... '''
+    ''' WORK IN PROGRESS '''
     def preprocess(self, image):
         greyed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(greyed, (5, 5), 0)
-        # convert greyscale to binary, nonzero pixel = 1, zero pixel = 0, need to set threshold to distinguish between yellow & white
-        # but this makes it unable to detect shapes??
         _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-        kernel = np.ones((3, 3), np.uint8)
-        closing = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        # plt.title('binary')
-        # plt.imshow(closing)
+        kernel = np.ones((5, 5), np.uint8)
+        closing = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        cv2.imshow('image', closing)
         return closing
 
 
 
 # load_image, process_image, find_contours (edges)
 class ShapeDetector():
+    ''' Loads, preprocesses and detects contours of an image '''
     def __init__(self, image_path, strategy: DetectionStrategy):
         self.image_path = image_path
         self.strategy = strategy
@@ -77,51 +72,48 @@ class ShapeDetector():
     
     def preprocess_image(self):
         self.processed_image = self.strategy.preprocess(self.original_image)
-        # plt.imshow(self.processed_image)
+        cv2.imshow('image', self.processed_image)
         return self.processed_image
     
     def find_contours(self):
         # RETR_EXTERNAL just for detect outline for shape. Not RETR_TREE, too noisy
+        # TREE works well with AdaptiveThreshold but returns nested contours, external ignores the shapes and marks the border of the image
         contours, _ = cv2.findContours(self.processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         self.contours = [c for c in contours if cv2.contourArea(c) > 100] # filters out noisy contours
         return self.contours
 
-# measure_contour, what_shape?
+
+
+
 class ShapeMeasurer:
-    ''' static util methods in class without need of instances '''
+    ''' Static utility methods for measurements and classification '''
     @staticmethod
     def measure_contour(contour: list) -> dict:
-        area = cv2.contourArea(contour) # calculate area
-        perimeter = cv2.arcLength(contour, True) # perimeter
-        x, y, w, h = cv2.boundingRect(contour) # this might break or be inaccurate for diamonds, or tilted oblongs? it doesn't so far
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        x, y, w, h = cv2.boundingRect(contour)
 
-        eps = 0.03 * perimeter
-        approx = cv2.approxPolyDP(contour, eps, True) # apparently this works for finding sides of a 'shape' according to stackoverflow
+        eps = 0.01 * perimeter # greatest distance from contour to approximation contour, measurement of accuracy, low for strictness
+        approx = cv2.approxPolyDP(contour, eps, True) # works for finding 'sides of a shape'
         num_sides = len(approx)
-        circularity = 4 * math.pi * area / (perimeter ** 2) if perimeter > 0 else 0 # formula to check roundness to detect circles
-        proportion = w / h
+        circularity = 4 * math.pi * area / (perimeter ** 2) if perimeter > 0 else 0 # check roundness of shape
 
         shape_type = ShapeMeasurer.classify_shape(num_sides, w, h, approx, circularity)
         return {'area': area, 'perimeter': perimeter, 'width': w, 'height': h, 'x': x, 'y': y, 
-                'num_sides': num_sides, 'shape_type': shape_type, 'circularity': circularity, 'proportion': proportion}
+                'num_sides': num_sides, 'shape_type': shape_type, 'circularity': circularity}
 
     @staticmethod
     def classify_shape(num_sides: int, width: float, height: float, approx, circularity) -> str:
-        shape_dict = {3: 'Triangle', 4: ('Square', 'Rectangle'), 5: 'Pentagon', 6: 'Hexagon', 7: 'Heptagon', 8: 'Octagon'}
-        proportion = width / height # get aspect ratio proportion
+        shape_dict = {3: 'Triangle', 4: ('Square', 'Rectangle'), 5: 'Pentagon', 6: 'Hexagon'}
+        proportion = width / height # get aspect ratio
         # threshold ~0.8-0.9, can be unreliable due to jaggedness or blur of contours + checking proportion incase for stretched circles
-        if circularity > 0.85 and 0.8 < proportion < 1.2: 
+        if circularity > 0.85 and 0.8 < proportion < 1.2 and cv2.isContourConvex(approx): 
             return 'Circle'
         if num_sides == 4:
             if 0.95 <= proportion <= 1.05: 
                 return shape_dict[4][0]
             else:
                 return shape_dict[4][1]
-        # elif num_sides == 8: # worked but sometimes circles can have somehow have sides ranging 4-11????
-        #     if cv2.isContourConvex(approx): # circles show 8 sides, check if convex for circle
-        #         return 'Circle/Polygon'
-        #     else: 
-        #         return shape_dict[8]
         elif num_sides in shape_dict:
             return shape_dict[num_sides]
         else:
@@ -131,26 +123,25 @@ class ShapeMeasurer:
 
 
 class ResultVisualizer:
+    ''' Draw and display contours '''
     def __init__(self, image):
         self.image = image.copy()
 
     def draw_contours(self, contours, measurements):
         for contour, measure in zip(contours, measurements):
-            cv2.drawContours(self.image, [contour], -1, (100, 100, 50), 2)
+            cv2.drawContours(self.image, [contour], -1, (100, 255, 50), 4)
+            x, y = measure['x'] + (measure['width'] // 5), measure['y'] + (measure['height'] // 3) # put text of shape info in center
 
-            # put text of shape info in center
-            x, y = measure['x'] + (measure['width'] // 5), measure['y'] + (measure['height'] // 3)
-            label = f'{measure["shape_type"]}, {measure["num_sides"]} sides'
+            label = f'{measure["shape_type"]}'
             cv2.putText(self.image, label, (x, y), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 50), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 200, 50), 1)
             
             area_label = f'Area: {measure["area"]}'
             cv2.putText(self.image, area_label, (x, y + 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 50), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 200, 50), 1)
         return self.image
     
     def display(self):
-        # convert back to original
         rgb_image = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
 
         plt.figure(figsize=(8, 6))
@@ -168,10 +159,10 @@ class ShapeApp:
         self.image_path = image_path
         self.detector = None
         self.measurements = []
-        self.strategies = {'1': YellowEdgeDetection(), '2': EdgeDetection(), '3': AdaptiveThreshold(), '4': Morphology()}
+        self.strategies = {1: CannyEdgeDetection(), 2: AdaptiveThreshold(), 3: Morphology()}
 
-    def run(self, strategy_choice: str = '1'):
-        strategy = self.strategies.get(strategy_choice, YellowEdgeDetection()) # get choice or run default
+    def run(self, strategy_choice: str = 1):
+        strategy = self.strategies.get(strategy_choice, CannyEdgeDetection()) # get choice or run default
         self.detector = ShapeDetector(self.image_path, strategy)
         
         print('Loading and processing image...')
@@ -190,10 +181,12 @@ class ShapeApp:
         visualizer.draw_contours(contours, self.measurements)
         visualizer.display()
 
+        self.print_information()
+
     def print_information(self):
         for i, measure in enumerate(self.measurements, 1):
             print(f'\nShape {i}')
-            print(f'Type: {measure["shape_type"]}, Circularity: {measure["circularity"]:.2f}, AR: {measure["proportion"]}')
+            print(f'Type: {measure["shape_type"]}')
             print(f'Area: {measure["area"]:.2f} pixels squared')
             print(f'Perimeter: {measure["perimeter"]:.2f} pixels')
             print(f'Dimensions: {measure["width"]} x {measure["height"]} pixels')
@@ -202,10 +195,16 @@ class ShapeApp:
 
 if __name__ == '__main__':
     IMAGE_PATH = 'images/more_shapes.png'
+    IMAGE_PATH = 'images/circles.jpg'
     # IMAGE_PATH = 'images/sign_night.jpg'
-    # IMAGE_PATH = 'images/traffic_noisy.jpeg'
-
     # IMAGE_PATH = 'images/coins.jpeg'
+    IMAGE_PATH = 'images/book.jpg'
+
+    print('Shape Detector tool')
+
+    print('Available detection strategies:')
+    print(' 1. Canny Edge Detection (good for clear boundaries)') # sign_night.jpg
+    print(' 2. Adaptive Threshold (good for varying brightness/lighting)') # more_shapes.jpg
+    print(' 3. Morphology (good for noisy images)') # coins.jpg, book.jpg
     shape = ShapeApp(IMAGE_PATH)
-    shape.run('1')
-    shape.print_information()
+    shape.run(3)
